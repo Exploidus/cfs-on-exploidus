@@ -33,6 +33,12 @@ However, executing cFS on standard Linux platforms introduces fundamental securi
  |  os-impl-tasks  |  os-impl-mutex  |  os-impl-queues  |  cap   |
  +---------------------------------------------------------------+
                                  |
+                                 v
+ +---------------------------------------------------------------+
+ |                   PSP Exploidus Native Port                   |
+ |  cfe_psp_start  |  cfe_psp_memory |  cfe_psp_watchdog | cds   |
+ +---------------------------------------------------------------+
+                                 |
                                  v  (Exploidus Native Syscalls)
  +---------------------------------------------------------------+
  |                      Exploidus OS Kernel                      |

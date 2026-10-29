@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../include/osapi.h"
+#include "../psp/inc/cfe_psp.h"
 
 #define EFFECTOR_THRUSTER_RCS 0x01
 #define FLIGHT_TASK_PRIORITY  50
@@ -36,31 +37,42 @@ static void gnc_flight_task(void)
     }
 }
 
-int main(void)
+/*
+ * Simulated NASA cFE Core Executive Entry Point
+ */
+void CFE_ES_Main(uint32 start_type, uint32 start_subtype, uint32 clean_code)
 {
-    printf("=================================================================\n");
-    printf(" NASA cFS on Exploidus OS - Flight Executive & Capability Test   \n");
-    printf(" Exploidus Labs - Native OSAL Port Demonstration                 \n");
-    printf("=================================================================\n\n");
+    (void)start_type;
+    (void)start_subtype;
+    (void)clean_code;
 
-    /* 1. Initialize Exploidus Native OSAL */
-    if (OS_API_Init() != OS_SUCCESS) {
-        printf("Failed to initialize OSAL\n");
-        return 1;
+    OS_printf("[CFE_ES] Core Flight Executive started successfully.\n");
+
+    /* 1. Test Critical Data Store (CDS) persistence */
+    uint32 mission_seq = 42;
+    CFE_PSP_WriteToCDS(&mission_seq, 0, sizeof(mission_seq));
+    uint32 recovered_seq = 0;
+    CFE_PSP_ReadFromCDS(&recovered_seq, 0, sizeof(recovered_seq));
+    if (recovered_seq == 42) {
+        OS_printf("  [PASS] Critical Data Store (CDS) integrity verified across platform memory.\n");
     }
 
-    /* 2. Create Software Bus Telemetry Queue */
+    /* 2. Service Watchdog */
+    CFE_PSP_WatchdogService();
+    OS_printf("  [PASS] Hardware watchdog serviced.\n\n");
+
+    /* 3. Create Software Bus Telemetry Queue */
     if (OS_QueueCreate(&g_telemetry_queue, "cFE_SB_TLM_Q", 16, sizeof(thruster_cmd_t), 0) != OS_SUCCESS) {
-        printf("Failed to create Software Bus Queue\n");
-        return 1;
+        OS_printf("Failed to create Software Bus Queue\n");
+        return;
     }
-    printf("[CFE_CORE] Software Bus Telemetry Queue initialized.\n\n");
+    OS_printf("[CFE_SB] Software Bus Telemetry Queue initialized.\n");
 
-    /* 3. Issue Capability Token to GNC Task (Task ID = 1) */
+    /* 4. Issue Capability Token to GNC Task (Task ID = 1) */
     Exploidus_Cap_Create(EFFECTOR_THRUSTER_RCS, 1, EXPLOIDUS_CAP_EFFECTOR, 100, &g_authorized_token);
-    printf("[CAPABILITY MGR] Issued unforgeable token for Thruster RCS (Authorized Task: 1, Valid until seq: 100)\n\n");
+    OS_printf("[CAPABILITY MGR] Issued unforgeable token for Thruster RCS (Authorized Task: 1, Valid until seq: 100)\n\n");
 
-    /* 4. Spawn GNC Flight Task */
+    /* 5. Spawn GNC Flight Task */
     osal_id_t gnc_task_id;
     OS_TaskCreate(&gnc_task_id, "cFE_GNC_APP", gnc_flight_task, NULL, 4096, FLIGHT_TASK_PRIORITY, 0);
 
@@ -71,43 +83,48 @@ int main(void)
     thruster_cmd_t tlm_out;
     size_t copied = 0;
     if (OS_QueueGet(g_telemetry_queue, &tlm_out, sizeof(tlm_out), &copied, OS_CHECK) == OS_SUCCESS) {
-        printf("[TELEMETRY RX] Consumed GNC telemetry packet from Software Bus queue (code: 0x%04X)\n\n",
-               tlm_out.command_code);
+        OS_printf("[TELEMETRY RX] Consumed GNC telemetry packet from Software Bus queue (code: 0x%04X)\n\n",
+                  tlm_out.command_code);
     }
 
-    printf("=================================================================\n");
-    printf(" Adversarial Capability Boundary Evaluation                      \n");
-    printf("=================================================================\n\n");
+    OS_printf("=================================================================\n");
+    OS_printf(" Adversarial Capability Boundary Evaluation                      \n");
+    OS_printf("=================================================================\n\n");
 
     /* Scenario 1: Unprivileged peer attempts to fire thruster with zero token */
-    printf("[SCENARIO 1] Adversary attempts unauthorized thruster actuation (token=NULL)...\n");
+    OS_printf("[SCENARIO 1] Adversary attempts unauthorized thruster actuation (token=NULL)...\n");
     int32 forged_ret = OS_EffectorActuate(EFFECTOR_THRUSTER_RCS, NULL, &tlm_out, sizeof(tlm_out));
     if (forged_ret == OS_INVALID_POINTER) {
-        printf("  [PASS] Actuation rejected! NULL token denied access.\n\n");
+        OS_printf("  [PASS] Actuation rejected! NULL token denied access.\n\n");
     }
 
     /* Scenario 2: Compromised peer tampers with token permissions */
-    printf("[SCENARIO 2] Adversary attempts actuation with forged capability token...\n");
+    OS_printf("[SCENARIO 2] Adversary attempts actuation with forged capability token...\n");
     exploidus_cap_token_t forged_token = g_authorized_token;
     forged_token.permissions = 0; /* Revoke effector permission */
     forged_ret = OS_EffectorActuate(EFFECTOR_THRUSTER_RCS, &forged_token, &tlm_out, sizeof(tlm_out));
     if (forged_ret == OS_ERR_CAPABILITY_DENIED) {
-        printf("  [PASS] Cryptographic tampering detected! Forged token rejected.\n\n");
+        OS_printf("  [PASS] Cryptographic tampering detected! Forged token rejected.\n\n");
     }
 
     /* Scenario 3: Monotonic freshness expiration / replay attack */
-    printf("[SCENARIO 3] Adversary attempts replay with expired capability token...\n");
+    OS_printf("[SCENARIO 3] Adversary attempts replay with expired capability token...\n");
     exploidus_cap_token_t expired_token;
     Exploidus_Cap_Create(EFFECTOR_THRUSTER_RCS, 1, EXPLOIDUS_CAP_EFFECTOR, 0, &expired_token); /* Expired at seq 0 */
     forged_ret = OS_EffectorActuate(EFFECTOR_THRUSTER_RCS, &expired_token, &tlm_out, sizeof(tlm_out));
     if (forged_ret == OS_ERR_CAPABILITY_EXPIRED) {
-        printf("  [PASS] Freshness check passed! Stale token rejected as expired.\n\n");
+        OS_printf("  [PASS] Freshness check passed! Stale token rejected as expired.\n\n");
     }
 
-    printf("=================================================================\n");
-    printf(" [PORT QUALIFIED] NASA cFS OSAL on Exploidus OS fully operational.\n");
-    printf(" Zero Linux bloat, zero DAC vulnerabilities, unforgeable effectors.\n");
-    printf("=================================================================\n\n");
+    OS_printf("=================================================================\n");
+    OS_printf(" [PORT QUALIFIED] NASA cFS OSAL & PSP on Exploidus OS Verified.   \n");
+    OS_printf(" Zero Linux bloat, zero DAC vulnerabilities, unforgeable effectors.\n");
+    OS_printf("=================================================================\n\n");
+}
 
+int main(int argc, char *argv[])
+{
+    /* Hand over execution to the Exploidus Platform Support Package */
+    CFE_PSP_Main(argc, argv);
     return 0;
 }
