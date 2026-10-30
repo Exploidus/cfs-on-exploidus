@@ -24,7 +24,7 @@ CFE_M2_SRC = cfe/src/cfe_time.c \
              cfe/src/cfe_tbl.c \
              cfe/src/cfe_sch.c
 
-DEMO_SRC   = demo/cfs_flight_demo.c $(OSAL_SRC) $(PSP_SRC) $(CFE_SRC)
+DEMO_SRC   = demo/cfs_flight_demo.c $(OSAL_SRC) $(PSP_SRC) $(CFE_SRC) $(CFE_M2_SRC)
 DEMO_M2_SRC = demo/cfs_m2_demo.c $(OSAL_SRC) $(PSP_SRC) $(CFE_SRC) $(CFE_M2_SRC)
 
 BIN    = cfs_exploidus_demo
