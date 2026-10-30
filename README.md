@@ -4,6 +4,8 @@ Native Operating System Abstraction Layer (OSAL) port and capability-hardened ex
 
 Developed by **Exploidus Labs** as an independent research reference for next-generation, high-integrity spaceflight platforms.
 
+> **Exploidus OS Kernel:** This port targets [rahadbhuiya/Exploidus](https://github.com/rahadbhuiya/Exploidus) -- a security-oriented experimental operating system built from scratch in x86-64 C, featuring a BLAKE3 capability token engine, intent-based preemptive scheduler, ExFS filesystem with provenance records, a full TCP/IP + SSH stack, and a Correlated Network Security Layer (CNSL). The OSAL bindings in this repository map directly to Exploidus native syscalls (`SYS_SPAWN`, `SYS_FUTEX`, `SYS_UPTIME`, `SYS_CAP_ISSUE`).
+
 ---
 
 ## 1. Architectural Motivation
@@ -48,11 +50,13 @@ However, executing cFS on standard Linux platforms introduces fundamental securi
                                  |
                                  v  (Exploidus Native Syscalls)
  +---------------------------------------------------------------+
- |                      Exploidus OS Kernel                      |
+ |          Exploidus OS Kernel (rahadbhuiya/Exploidus)          |
  |  - SYS_SPAWN (Intent-Based Priority Classes: INTENT_COMPUTE)  |
  |  - SYS_FUTEX (Fast Userspace Locking with Zero Contention)    |
  |  - BLAKE3 Capability Token Engine (Hardware Effector Gate)    |
  |  - Correlated Network Security Layer (CNSL Telemetry Guard)   |
+ |  - ExFS Filesystem (Provenance Records + Crash-Consistent     |
+ |    Metadata Journal)                                          |
  +---------------------------------------------------------------+
 ```
 
@@ -116,7 +120,16 @@ Key features:
 
 ---
 
-## 6. Quick Start & Demonstration
+## 6. Related Projects
+
+| Repository | Description |
+| :--- | :--- |
+| [rahadbhuiya/Exploidus](https://github.com/rahadbhuiya/Exploidus) | Exploidus OS kernel -- x86-64 from-scratch OS with BLAKE3 capability engine, intent-based scheduler, ExFS, TCP/IP, SSH, and CNSL |
+| [Exploidus/cfs-adversarial-testbed](https://github.com/Exploidus/cfs-adversarial-testbed) | eBPF-based adversarial security testbed for NASA cFS -- live syscall monitoring, capability boundary breach detection, and Security Qualification Contract |
+
+---
+
+## 7. Quick Start & Demonstration
 
 ### Milestone 1 Demo (OSAL + cFE Core)
 
@@ -175,7 +188,7 @@ make all
 
 ---
 
-## 7. License
+## 8. License
 
 Apache 2.0. Copyright (c) Exploidus Labs.
 NASA cFS core definitions licensed under Apache 2.0 by NASA GSFC.
