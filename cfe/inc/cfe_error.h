@@ -5,6 +5,7 @@
 #include "../../include/osapi-error.h"
 
 #define CFE_SUCCESS                   OS_SUCCESS
+#define CFE_SEVERITY_INFO             0x10000000
 
 /* Software Bus (SB) Errors */
 #define CFE_SB_ERROR                  (-0x2001)
@@ -29,5 +30,16 @@
 #define CFE_EVS_UNKNOWN_FLAG          (-0x4002)
 #define CFE_EVS_APP_NOT_REGISTERED    (-0x4003)
 #define CFE_EVS_INVALID_PARAMETER     (-0x4004)
+
+/* Table Services (TBL) Errors */
+#define CFE_TBL_ERR_INVALID_HANDLE         (-0x5001)
+#define CFE_TBL_ERR_INVALID_SIZE           (-0x5002)
+#define CFE_TBL_ERR_INVALID_POINTER        (-0x5003)
+#define CFE_TBL_ERR_NO_RESOURCES           (-0x5004)
+#define CFE_TBL_ERR_DUPLICATE_REGISTRATION (-0x5005)
+
+/* Scheduler (SCH) Errors */
+#define CFE_SCH_ERR_INVALID_TABLE    (-0x6001)
+#define CFE_SCH_ERR_INVALID_SLOT     (-0x6002)
 
 #endif /* CFE_ERROR_H */
