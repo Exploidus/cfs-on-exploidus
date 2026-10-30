@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../../include/osapi.h"
+#include "../inc/cfe_es.h"
 #include "../inc/cfe_sch.h"
 #include "../inc/cfe_sb.h"
 #include "../inc/cfe_evs.h"
