@@ -37,6 +37,7 @@ int32 OS_TaskCreate(osal_id_t *task_id, const char *task_name, OS_TaskCallback_t
                     const uint32 *stack_pointer, size_t stack_size, uint32 priority, uint32 flags);
 int32 OS_TaskDelete(osal_id_t task_id);
 void  OS_TaskDelay(uint32 millisecond);
+void  OS_TaskExit(void);
 osal_id_t OS_TaskGetId(void);
 
 /* Mutex API (Futex-backed on Exploidus) */

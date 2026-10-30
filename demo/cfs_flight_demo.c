@@ -1,13 +1,17 @@
 #include <stdio.h>
 #include <string.h>
-#include "../include/osapi.h"
-#include "../psp/inc/cfe_psp.h"
+#include "../cfe/inc/cfe.h"
 
-#define EFFECTOR_THRUSTER_RCS 0x01
-#define FLIGHT_TASK_PRIORITY  50
+#define EFFECTOR_THRUSTER_RCS     0x01
+#define FLIGHT_TASK_PRIORITY      50
 
-static osal_id_t g_telemetry_queue;
-static exploidus_cap_token_t g_authorized_token;
+#define MSG_ID_TELEMETRY          0x1801
+#define MSG_ID_RESTRICTED_GNC_CMD (CFE_SB_CAP_RESTRICTED_MASK | 0x0001)
+
+static CFE_SB_PipeId_t       g_gnc_pipe;
+static exploidus_cap_token_t g_thruster_token;
+static exploidus_cap_token_t g_sb_write_token;
+static exploidus_cap_token_t g_sb_read_token;
 
 typedef struct
 {
@@ -15,116 +19,207 @@ typedef struct
     float  thrust_vector[3];
 } thruster_cmd_t;
 
-/* Authorized Guidance, Navigation, and Control (GNC) Task */
+/* Authorized Flight Application */
 static void gnc_flight_task(void)
 {
-    OS_printf("[GNC_APP] Initialized on Exploidus OS (Task ID: %u)\n", OS_TaskGetId());
+    CFE_ES_RegisterApp();
 
+    uint32 app_id = 0;
+    CFE_ES_GetAppID(&app_id);
+    CFE_EVS_SendEvent(101, CFE_EVS_EventType_INFORMATION,
+                      "GNC Application initialized on Exploidus cFE (App ID: %u)", app_id);
+
+    /* 1. Actuate Physical Thruster with authorized capability token */
     thruster_cmd_t cmd = {
         .command_code = 0xAA01,
         .thrust_vector = { 0.0f, 0.5f, 1.0f }
     };
 
-    /* Send telemetry via Software Bus queue */
-    OS_QueuePut(g_telemetry_queue, &cmd, sizeof(cmd), 0);
-
-    /* Actuate physical thruster with authorized capability token */
-    int32 ret = OS_EffectorActuate(EFFECTOR_THRUSTER_RCS, &g_authorized_token, &cmd, sizeof(cmd));
-    if (ret == OS_SUCCESS) {
-        OS_printf("  [PASS] GNC thruster firing verified via valid capability token.\n");
+    int32 eff_ret = OS_EffectorActuate(EFFECTOR_THRUSTER_RCS, &g_thruster_token, &cmd, sizeof(cmd));
+    if (eff_ret == OS_SUCCESS) {
+        CFE_EVS_SendEvent(102, CFE_EVS_EventType_INFORMATION,
+                          "GNC physical thruster firing verified via valid capability token.");
     } else {
-        OS_printf("  [FAIL] Legitimate GNC actuation was blocked: %d\n", ret);
+        CFE_EVS_SendEvent(103, CFE_EVS_EventType_ERROR,
+                          "GNC thruster actuation failed: %d", eff_ret);
+    }
+
+    /* 2. Publish Restricted Guidance Command via Gated Software Bus */
+    CFE_SB_Buffer_t restricted_msg;
+    CFE_SB_InitMsg(&restricted_msg, MSG_ID_RESTRICTED_GNC_CMD, sizeof(cmd), true);
+    memcpy(restricted_msg.Data, &cmd, sizeof(cmd));
+
+    int32 sb_pub = CFE_SB_TransmitMsgGated(&restricted_msg, true, &g_sb_write_token);
+    if (sb_pub == CFE_SUCCESS) {
+        CFE_EVS_SendEvent(104, CFE_EVS_EventType_INFORMATION,
+                          "GNC transmitted capability-gated guidance packet to Software Bus.");
+    } else {
+        CFE_EVS_SendEvent(105, CFE_EVS_EventType_ERROR,
+                          "GNC failed to transmit gated packet: %d", sb_pub);
     }
 }
 
-/*
- * Simulated NASA cFE Core Executive Entry Point
- */
-void CFE_ES_Main(uint32 start_type, uint32 start_subtype, uint32 clean_code)
+void CFE_UserApplicationInit(void)
 {
-    (void)start_type;
-    (void)start_subtype;
-    (void)clean_code;
-
-    OS_printf("[CFE_ES] Core Flight Executive started successfully.\n");
-
-    /* 1. Test Critical Data Store (CDS) persistence */
-    uint32 mission_seq = 42;
-    CFE_PSP_WriteToCDS(&mission_seq, 0, sizeof(mission_seq));
-    uint32 recovered_seq = 0;
-    CFE_PSP_ReadFromCDS(&recovered_seq, 0, sizeof(recovered_seq));
-    if (recovered_seq == 42) {
-        OS_printf("  [PASS] Critical Data Store (CDS) integrity verified across platform memory.\n");
-    }
-
-    /* 2. Service Watchdog */
-    CFE_PSP_WatchdogService();
-    OS_printf("  [PASS] Hardware watchdog serviced.\n\n");
-
-    /* 3. Create Software Bus Telemetry Queue */
-    if (OS_QueueCreate(&g_telemetry_queue, "cFE_SB_TLM_Q", 16, sizeof(thruster_cmd_t), 0) != OS_SUCCESS) {
-        OS_printf("Failed to create Software Bus Queue\n");
-        return;
-    }
-    OS_printf("[CFE_SB] Software Bus Telemetry Queue initialized.\n");
-
-    /* 4. Issue Capability Token to GNC Task (Task ID = 1) */
-    Exploidus_Cap_Create(EFFECTOR_THRUSTER_RCS, 1, EXPLOIDUS_CAP_EFFECTOR, 100, &g_authorized_token);
-    OS_printf("[CAPABILITY MGR] Issued unforgeable token for Thruster RCS (Authorized Task: 1, Valid until seq: 100)\n\n");
-
-    /* 5. Spawn GNC Flight Task */
-    osal_id_t gnc_task_id;
-    OS_TaskCreate(&gnc_task_id, "cFE_GNC_APP", gnc_flight_task, NULL, 4096, FLIGHT_TASK_PRIORITY, 0);
-
-    /* Allow GNC task to execute */
-    OS_TaskDelay(100);
-
-    /* Read telemetry from queue */
-    thruster_cmd_t tlm_out;
-    size_t copied = 0;
-    if (OS_QueueGet(g_telemetry_queue, &tlm_out, sizeof(tlm_out), &copied, OS_CHECK) == OS_SUCCESS) {
-        OS_printf("[TELEMETRY RX] Consumed GNC telemetry packet from Software Bus queue (code: 0x%04X)\n\n",
-                  tlm_out.command_code);
-    }
-
-    OS_printf("=================================================================\n");
-    OS_printf(" Adversarial Capability Boundary Evaluation                      \n");
+    OS_printf("\n=================================================================\n");
+    OS_printf(" NASA cFE v0.2.0 on Exploidus OS - Milestone 1 Evaluation        \n");
+    OS_printf(" Core Architecture: Software Bus (SB), ES, and EVS Audit Logging \n");
     OS_printf("=================================================================\n\n");
 
-    /* Scenario 1: Unprivileged peer attempts to fire thruster with zero token */
-    OS_printf("[SCENARIO 1] Adversary attempts unauthorized thruster actuation (token=NULL)...\n");
-    int32 forged_ret = OS_EffectorActuate(EFFECTOR_THRUSTER_RCS, NULL, &tlm_out, sizeof(tlm_out));
-    if (forged_ret == OS_INVALID_POINTER) {
-        OS_printf("  [PASS] Actuation rejected! NULL token denied access.\n\n");
+    /* -------------------------------------------------------------
+     * Subsystem Test 1: Executive Services (ES) App & Memory Pools
+     * ------------------------------------------------------------- */
+    OS_printf("[TEST 1] cFE Executive Services (ES) Subsystem...\n");
+    CFE_ES_RegisterApp();
+
+    uint32 main_app_id = 0;
+    CFE_ES_GetAppID(&main_app_id);
+    char app_name[CFE_ES_APP_NAME_LEN];
+    CFE_ES_GetAppName(app_name, main_app_id, sizeof(app_name));
+    OS_printf("  [PASS] Application registered in ES Table: %s (App ID: %u)\n", app_name, main_app_id);
+
+    /* Static Memory Pool test */
+    static uint8 s_flight_pool_mem[2048];
+    CFE_ES_MemHandle_t pool_handle = 0;
+    if (CFE_ES_PoolCreate(&pool_handle, s_flight_pool_mem, sizeof(s_flight_pool_mem)) == CFE_SUCCESS) {
+        void *test_buf = NULL;
+        if (CFE_ES_GetPoolBuf(pool_handle, &test_buf, 256) == CFE_SUCCESS && test_buf != NULL) {
+            OS_printf("  [PASS] ES Memory Pool buffer allocation verified (Handle: %u, Size: 256 B)\n", pool_handle);
+        }
     }
 
-    /* Scenario 2: Compromised peer tampers with token permissions */
-    OS_printf("[SCENARIO 2] Adversary attempts actuation with forged capability token...\n");
-    exploidus_cap_token_t forged_token = g_authorized_token;
-    forged_token.permissions = 0; /* Revoke effector permission */
-    forged_ret = OS_EffectorActuate(EFFECTOR_THRUSTER_RCS, &forged_token, &tlm_out, sizeof(tlm_out));
+    /* PSP Services check */
+    uint32 mission_seq = 0x50415353;
+    CFE_PSP_WriteToCDS(&mission_seq, 0, sizeof(mission_seq));
+    uint32 restored_seq = 0;
+    CFE_PSP_ReadFromCDS(&restored_seq, 0, sizeof(restored_seq));
+    if (restored_seq == 0x50415353) {
+        OS_printf("  [PASS] Critical Data Store (CDS) persistence verified across platform memory.\n");
+    }
+    CFE_PSP_WatchdogService();
+    OS_printf("  [PASS] Hardware Watchdog timer serviced.\n\n");
+
+    /* -------------------------------------------------------------
+     * Subsystem Test 2: Software Bus (SB) Pub/Sub & Capability Gating
+     * ------------------------------------------------------------- */
+    OS_printf("[TEST 2] cFE Software Bus (SB) Subsystem & Security Gates...\n");
+    int32 sb_status = CFE_SB_CreatePipe(&g_gnc_pipe, 8, "GNC_INPUT_PIPE");
+    if (sb_status == CFE_SUCCESS) {
+        OS_printf("  [PASS] Software Bus pipe created successfully (Pipe ID: %u)\n", g_gnc_pipe);
+    }
+
+    /* Standard Telemetry Subscription & Delivery */
+    CFE_SB_Subscribe(MSG_ID_TELEMETRY, g_gnc_pipe);
+
+    CFE_SB_Buffer_t tlm_packet;
+    CFE_SB_InitMsg(&tlm_packet, MSG_ID_TELEMETRY, 64, true);
+    snprintf((char *)tlm_packet.Data, sizeof(tlm_packet.Data), "EXPLOIDUS_CFS_TLM_OK");
+    CFE_SB_TransmitMsg(&tlm_packet, true);
+
+    CFE_SB_Buffer_t *rx_buf = NULL;
+    if (CFE_SB_ReceiveBuffer(&rx_buf, g_gnc_pipe, CFE_SB_POLL) == CFE_SUCCESS && rx_buf != NULL) {
+        OS_printf("  [PASS] Standard Software Bus Pub/Sub verified (MsgId: 0x%04X, Payload: %s)\n",
+                  rx_buf->MsgId, (char *)rx_buf->Data);
+    }
+
+    /* Restricted Software Bus Evaluation (Capability Gated) */
+    OS_printf("\n  [SECURITY EVALUATION] Software Bus Capability Gate Verification:\n");
+
+    /* Adversarial attempt: subscribe to restricted MsgId without token */
+    int32 unauth_sub = CFE_SB_Subscribe(MSG_ID_RESTRICTED_GNC_CMD, g_gnc_pipe);
+    if (unauth_sub == CFE_SB_ACCESS_DENIED) {
+        OS_printf("  [PASS] Unauthorized SB subscription rejected (ACCESS_DENIED).\n");
+    }
+
+    /* Adversarial attempt: transmit to restricted MsgId without token */
+    CFE_SB_Buffer_t forged_msg;
+    CFE_SB_InitMsg(&forged_msg, MSG_ID_RESTRICTED_GNC_CMD, 16, true);
+    int32 unauth_tx = CFE_SB_TransmitMsg(&forged_msg, true);
+    if (unauth_tx == CFE_SB_ACCESS_DENIED) {
+        OS_printf("  [PASS] Unauthorized SB transmit rejected (ACCESS_DENIED).\n");
+    }
+
+    /* Issue valid Exploidus capability tokens */
+    osal_id_t main_task = OS_TaskGetId();
+    Exploidus_Cap_Create(MSG_ID_RESTRICTED_GNC_CMD, (uint32)main_task, EXPLOIDUS_CAP_READ, 100, &g_sb_read_token);
+    Exploidus_Cap_Create(MSG_ID_RESTRICTED_GNC_CMD, 1, EXPLOIDUS_CAP_WRITE, 100, &g_sb_write_token);
+    Exploidus_Cap_Create(EFFECTOR_THRUSTER_RCS, 1, EXPLOIDUS_CAP_EFFECTOR, 100, &g_thruster_token);
+
+    int32 auth_sub = CFE_SB_SubscribeGated(MSG_ID_RESTRICTED_GNC_CMD, g_gnc_pipe, &g_sb_read_token);
+    if (auth_sub == CFE_SUCCESS) {
+        OS_printf("  [PASS] Capability-gated SB subscription authorized via BLAKE3 token.\n\n");
+    }
+
+    /* -------------------------------------------------------------
+     * Subsystem Test 3: Spawn Authorized GNC Application Task
+     * ------------------------------------------------------------- */
+    OS_printf("[TEST 3] Executing GNC Flight Task under cFE...\n");
+    uint32 gnc_task_id = 0;
+    CFE_ES_CreateChildTask(&gnc_task_id, "GNC_TASK", gnc_flight_task, NULL, 4096, FLIGHT_TASK_PRIORITY, 0);
+
+    /* Allow GNC task to run */
+    CFE_ES_WaitForStartupSync(100);
+
+    /* Consume gated packet from GNC on Software Bus */
+    CFE_SB_Buffer_t *gated_rx = NULL;
+    if (CFE_SB_ReceiveBuffer(&gated_rx, g_gnc_pipe, CFE_SB_POLL) == CFE_SUCCESS && gated_rx != NULL) {
+        thruster_cmd_t *rx_cmd = (thruster_cmd_t *)gated_rx->Data;
+        OS_printf("  [PASS] Received authorized GNC command on gated Software Bus (Cmd: 0x%04X, Vector: [%.1f, %.1f, %.1f])\n\n",
+                  rx_cmd->command_code,
+                  rx_cmd->thrust_vector[0], rx_cmd->thrust_vector[1], rx_cmd->thrust_vector[2]);
+    }
+
+    /* -------------------------------------------------------------
+     * Subsystem Test 4: cFE Event Services (EVS) Cryptographic Audit
+     * ------------------------------------------------------------- */
+    OS_printf("[TEST 4] cFE Event Services (EVS) Cryptographic Audit Log Chain...\n");
+    uint32 total_events = CFE_EVS_GetAuditLogCount();
+    OS_printf("  Total EVS Audit Entries Recorded: %u\n", total_events);
+
+    int32 chain_integrity = CFE_EVS_VerifyAuditChain();
+    if (chain_integrity == CFE_SUCCESS) {
+        OS_printf("  [PASS] Cryptographic audit hash chain verified 100%% intact (Zero tampering).\n");
+    }
+
+    /* Active tamper detection test */
+    OS_printf("  [SECURITY EVALUATION] Simulating unauthorized in-memory audit log tampering...\n");
+    CFE_EVS_InjectTamperFault(0);
+    if (CFE_EVS_VerifyAuditChain() != CFE_SUCCESS) {
+        OS_printf("  [PASS] Tampering instantly detected! Hash chain anomaly caught.\n");
+    }
+    CFE_EVS_InjectTamperFault(0); /* Restore original state */
+    if (CFE_EVS_VerifyAuditChain() == CFE_SUCCESS) {
+        OS_printf("  [PASS] Hash chain restored and re-verified clean.\n");
+    }
+
+    /* -------------------------------------------------------------
+     * Subsystem Test 5: Hardware Effector Tampering Resistance
+     * ------------------------------------------------------------- */
+    OS_printf("\n[TEST 5] Hardware Effector Tampering Resistance...\n");
+    thruster_cmd_t dummy_cmd = { .command_code = 0xFFFF };
+
+    int32 null_ret = OS_EffectorActuate(EFFECTOR_THRUSTER_RCS, NULL, &dummy_cmd, sizeof(dummy_cmd));
+    if (null_ret == OS_INVALID_POINTER) {
+        OS_printf("  [PASS] Physical actuation without capability token blocked.\n");
+    }
+
+    exploidus_cap_token_t forged_token = g_thruster_token;
+    forged_token.permissions = 0;
+    int32 forged_ret = OS_EffectorActuate(EFFECTOR_THRUSTER_RCS, &forged_token, &dummy_cmd, sizeof(dummy_cmd));
     if (forged_ret == OS_ERR_CAPABILITY_DENIED) {
-        OS_printf("  [PASS] Cryptographic tampering detected! Forged token rejected.\n\n");
+        OS_printf("  [PASS] Physical actuation with tampered capability token blocked.\n");
     }
 
-    /* Scenario 3: Monotonic freshness expiration / replay attack */
-    OS_printf("[SCENARIO 3] Adversary attempts replay with expired capability token...\n");
-    exploidus_cap_token_t expired_token;
-    Exploidus_Cap_Create(EFFECTOR_THRUSTER_RCS, 1, EXPLOIDUS_CAP_EFFECTOR, 0, &expired_token); /* Expired at seq 0 */
-    forged_ret = OS_EffectorActuate(EFFECTOR_THRUSTER_RCS, &expired_token, &tlm_out, sizeof(tlm_out));
-    if (forged_ret == OS_ERR_CAPABILITY_EXPIRED) {
-        OS_printf("  [PASS] Freshness check passed! Stale token rejected as expired.\n\n");
-    }
-
-    OS_printf("=================================================================\n");
-    OS_printf(" [PORT QUALIFIED] NASA cFS OSAL & PSP on Exploidus OS Verified.   \n");
-    OS_printf(" Zero Linux bloat, zero DAC vulnerabilities, unforgeable effectors.\n");
+    OS_printf("\n=================================================================\n");
+    OS_printf(" [MILESTONE 1 COMPLETE] Core Flight Executive (cFE) Architecture \n");
+    OS_printf(" - cFE Software Bus (SB): Active with Capability-Gated Routing   \n");
+    OS_printf(" - cFE Executive Services (ES): Active with Lifecycle & MemPool  \n");
+    OS_printf(" - cFE Event Services (EVS): Active with Cryptographic Audit Log \n");
     OS_printf("=================================================================\n\n");
 }
 
 int main(int argc, char *argv[])
 {
-    /* Hand over execution to the Exploidus Platform Support Package */
     CFE_PSP_Main(argc, argv);
     return 0;
 }

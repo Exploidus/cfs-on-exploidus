@@ -103,6 +103,17 @@ void OS_TaskDelay(uint32 millisecond)
 #endif
 }
 
+void OS_TaskExit(void)
+{
+    osal_id_t tid = OS_TaskGetId();
+    if (tid > 0 && tid <= OS_MAX_TASKS) {
+        task_table[tid - 1].in_use = false;
+    }
+#ifndef __EXPLOIDUS_KERNEL__
+    pthread_exit(NULL);
+#endif
+}
+
 osal_id_t OS_TaskGetId(void)
 {
     return current_task_id;

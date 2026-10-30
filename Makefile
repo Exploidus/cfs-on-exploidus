@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS ?= -Wall -Wextra -O2 -Iinclude -Ipsp/inc -D_GNU_SOURCE
+CFLAGS ?= -Wall -Wextra -O2 -Iinclude -Ipsp/inc -Icfe/inc -D_GNU_SOURCE
 LDFLAGS ?= -lpthread
 
 OSAL_SRC = src/os-impl-common.c \
@@ -15,7 +15,11 @@ PSP_SRC  = psp/src/cfe_psp_start.c \
            psp/src/cfe_psp_memory.c \
            psp/src/cfe_psp_watchdog.c
 
-DEMO_SRC = demo/cfs_flight_demo.c $(OSAL_SRC) $(PSP_SRC)
+CFE_SRC  = cfe/src/cfe_es.c \
+           cfe/src/cfe_sb.c \
+           cfe/src/cfe_evs.c
+
+DEMO_SRC = demo/cfs_flight_demo.c $(OSAL_SRC) $(PSP_SRC) $(CFE_SRC)
 BIN = cfs_exploidus_demo
 
 all: $(BIN)

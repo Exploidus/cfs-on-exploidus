@@ -27,6 +27,12 @@ However, executing cFS on standard Linux platforms introduces fundamental securi
  |        [ GNC_App ]       [ Telemetry_App ]      [ Thruster ]  |
  +---------------------------------------------------------------+
                                  |
+                                 v  (Core Flight Executive)
+ +---------------------------------------------------------------+
+ |           Core Flight Executive (cFE) v0.2.0 Layer            |
+ |  cfe_sb (Gated Pub/Sub) | cfe_es (Lifecycle) | cfe_evs (Audit)|
+ +---------------------------------------------------------------+
+                                 |
                                  v  (Standard cFS OSAL API)
  +---------------------------------------------------------------+
  |                   OSAL Exploidus Native Port                  |
@@ -48,6 +54,14 @@ However, executing cFS on standard Linux platforms introduces fundamental securi
  |  - Correlated Network Security Layer (CNSL Telemetry Guard)   |
  +---------------------------------------------------------------+
 ```
+
+---
+
+## 3. Core Flight Executive (cFE) Architecture (Milestone 1)
+
+1. **cFE Software Bus (SB)**: Implements capability-gated publish-subscribe routing pipes (`CFE_SB_CreatePipe`, `CFE_SB_SubscribeGated`, `CFE_SB_TransmitMsgGated`). Message endpoints marked with `CFE_SB_CAP_RESTRICTED_MASK` require cryptographic capability verification before messages can be routed.
+2. **cFE Executive Services (ES)**: Manages application registration, child flight tasks, and static memory pools (`CFE_ES_RegisterApp`, `CFE_ES_CreateChildTask`, `CFE_ES_PoolCreate`).
+3. **cFE Event Services (EVS)**: High-integrity event dispatching featuring cryptographic audit chaining (`CFE_EVS_SendEvent`, `CFE_EVS_VerifyAuditChain`). Every event is committed to a rolling hash chain to prevent in-flight tampering or log omission.
 
 ---
 
