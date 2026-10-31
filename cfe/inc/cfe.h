@@ -11,5 +11,9 @@
 #include "cfe_time.h"
 #include "cfe_tbl.h"
 #include "cfe_sch.h"
+#include "cfe_ci.h"
+#include "cfe_to.h"
+#include "cfe_hk.h"
+#include "cfe_cs.h"
 
 #endif /* CFE_H */

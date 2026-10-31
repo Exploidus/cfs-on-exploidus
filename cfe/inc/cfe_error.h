@@ -42,4 +42,10 @@
 #define CFE_SCH_ERR_INVALID_TABLE    (-0x6001)
 #define CFE_SCH_ERR_INVALID_SLOT     (-0x6002)
 
+/* General Status & M3 App Errors */
+#define CFE_STATUS_BAD_ARGUMENT      (-0x1001)
+#define CFE_STATUS_BAD_COMMAND_SIZE  (-0x1002)
+#define CFE_STATUS_CHECKSUM_ERROR    (-0x1003)
+#define CFE_STATUS_NO_RESOURCE       (-0x1004)
+
 #endif /* CFE_ERROR_H */
