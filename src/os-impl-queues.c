@@ -1,8 +1,9 @@
+#include <stdio.h>
 #include <string.h>
 #include "../include/osapi.h"
 
 #define MAX_QUEUE_DEPTH 32
-#define MAX_QUEUE_DATA_SIZE 256
+#define MAX_QUEUE_DATA_SIZE 2048
 
 typedef struct
 {
